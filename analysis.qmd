@@ -1,4 +1,112 @@
 ---
 title: "Analyzing US Births"
 author: "Emma Acedo"
+execute:
+  echo: false
 ---
+```{r}
+#| message: false
+library(tidyverse)
+library(readxl)
+```
+
+```{r}
+births <- read_excel("data/us_births_1994_2014.xlsx")
+glimpse(births)
+```
+
+```{r}
+#| cache: true
+births_tibble <- read_excel("data/us_births_1994_2014.xlsx") |>
+  mutate(day_of_week = factor(
+    day_of_week,
+    levels = c("Sun", "Mon", "Tues", "Wed", "Thurs", "Fri", "Sat"),
+    ordered = TRUE
+  ))
+```
+
+```{r}
+births_tibble |>
+  group_by(month, date_of_month) |>
+  summarize(mean_births = mean(births), .groups = "drop")
+```
+
+```{r}
+births_tibble |>
+  group_by(month, date_of_month) |>
+  summarize(mean_births = mean(births), .groups = "drop") |>
+  ggplot(aes(x = date_of_month, y = month, fill = mean_births)) +
+  geom_tile() +
+  scale_y_reverse(breaks = 1:12, labels = month.name) +
+  labs(x = "Day of month", y = "Month", fill = "Mean births")
+```
+
+```{r}
+births_tibble |>
+  filter(month == 12) |>
+  group_by(year) |>
+  summarize(
+    births_dec_25 = sum(births[date_of_month == 25]),
+    surrounding_average = mean(births[date_of_month %in% c(20:24, 27:30)]),
+    pct_of_baseline = births_dec_25 / surrounding_average * 100,
+    weekday = day_of_week[date_of_month == 25],
+    .groups = "drop"
+  )
+```
+
+```{r}
+births_tibble |>
+  filter(month == 12) |>
+  group_by(year) |>
+  summarize(
+    births_dec_25 = sum(births[date_of_month == 25]),
+    surrounding_average = mean(births[date_of_month %in% c(20:24, 27:30)]),
+    pct_of_baseline = births_dec_25 / surrounding_average * 100,
+    weekday = day_of_week[date_of_month == 25],
+    .groups = "drop"
+  ) |>
+  ggplot(aes(x = year, y = pct_of_baseline)) +
+  geom_line() +
+  geom_point(aes(color = weekday)) +
+  labs(
+    x = "Year",
+    y = "December 25 births (% of baseline)",
+    color = "Weekday"
+  )
+```
+```{r}
+births_model <- lm(
+  births ~ factor(year) + factor(month) + factor(day_of_week),
+  data = births_tibble
+)
+
+summary(births_model)$r.squared
+```
+```{r}
+births_adjusted <- births_tibble |>
+  mutate(pct_resid = resid(births_model) / mean(births) * 100)
+
+calendar_resid <- births_adjusted |>
+  filter(!(month == 2 & date_of_month == 29)) |>
+  group_by(month, date_of_month) |>
+  summarize(pct_resid = mean(pct_resid), .groups = "drop") |>
+  mutate(date = as.Date(sprintf("2001-%02d-%02d", month, date_of_month)))
+
+calendar_resid
+```
+```{r}
+holidays <- calendar_resid |>
+  filter(date %in% as.Date(c("2001-01-01", "2001-07-04", "2001-12-25"))) |>
+  mutate(holiday = c("New Year's Day", "Independence Day", "Christmas"))
+
+ggplot(calendar_resid, aes(x = date, y = pct_resid)) +
+  geom_line() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_text(
+    data = holidays,
+    aes(label = holiday),
+    nudge_y = 1.5,
+    check_overlap = TRUE
+  ) +
+  labs(x = "Calendar date", y = "Mean residual (% of average births)")
+```
